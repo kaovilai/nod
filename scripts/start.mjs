@@ -35,10 +35,13 @@ try {
   ]);
   if (wanted !== installed) await run('pnpm', ['install', '--frozen-lockfile', '--prod=false']);
   if (production) await run('pnpm', ['run', 'build']);
-  const { stdout } = await promisify(execFile)('docker', ['info', '--format', '{{.NCPU}}']);
-  const dockerCpus = Number(stdout.trim());
+  const { stdout } = await promisify(execFile)('docker', ['info', '--format', '{{json .}}']);
+  const info = JSON.parse(stdout);
+  const dockerCpus = Number(info.NCPU ?? info.host?.cpus);
   if (!Number.isInteger(dockerCpus) || dockerCpus < 1)
     throw new Error('Docker did not report a usable CPU count.');
+  const podman = info.NCPU === undefined;
+  const compose = podman ? ['-f', 'compose.yaml', '-f', 'compose.podman.yaml'] : [];
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
     const settings = parseEnv(await readFile('.env', 'utf8'));
     const cpuLimit = (name, fallback) => {
@@ -61,12 +64,34 @@ try {
       ...(appVersion !== undefined ? { NOD_APP_VERSION: appVersion } : {}),
     };
     await prepareLocalDirectories(environment.NOD_DATA_ROOT);
-    await run('docker', ['compose', 'up', '-d', '--wait', 'postgres'], environment);
+    await run('docker', ['compose', ...compose, 'up', '-d', '--wait', 'postgres'], environment);
     await rotateLocalDatabase(database, { environment });
     await verifyLocalDatabase(database);
+    await run('docker', ['compose', ...compose, 'build'], environment);
+    if (podman) {
+      const image = (
+        await promisify(execFile)('docker', [
+          'image',
+          'inspect',
+          'nod-local-workspace',
+          '--format',
+          '{{.Id}}',
+        ])
+      ).stdout.trim();
+      const running = await promisify(execFile)('docker', [
+        'inspect',
+        'nod-workspace',
+        '--format',
+        '{{.Image}}',
+      ])
+        .then((result) => result.stdout.trim())
+        .catch(() => undefined);
+      if (running !== undefined && running !== image)
+        await run('docker', ['compose', ...compose, 'rm', '-sf', 'workspace'], environment);
+    }
     await run(
       'docker',
-      ['compose', 'up', '-d', '--build', '--wait', '--remove-orphans'],
+      ['compose', ...compose, 'up', '-d', '--wait', '--remove-orphans'],
       environment,
     );
     return environment;
