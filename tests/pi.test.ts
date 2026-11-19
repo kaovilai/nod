@@ -7476,7 +7476,9 @@ test('native OpenAI model discovery and requests keep each connection in its reg
       assert.equal(new Headers(init?.headers).get('authorization'), `Bearer fixture-${region}`);
       assert.equal(init?.redirect, 'error');
       return Response.json({
-        data: ['gpt-6.1-sol', 'gpt-6-luna', 'gpt-audio-1.5'].map((id) => ({ id })),
+        data: ['gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-6-luna', 'gpt-audio-1.5'].map(
+          (id) => ({ id }),
+        ),
       });
     },
   });
@@ -7484,7 +7486,7 @@ test('native OpenAI model discovery and requests keep each connection in its reg
     (['global', 'eu', 'us'] as const).map(async (region) => {
       const credential = modelKeyCredential('openai', `fixture-${region}`, { region });
       const definitions = await backend.catalog('openai', 'api_key', credential);
-      assert.equal(definitions.length, 3);
+      assert.equal(definitions.length, 5);
       for (const definition of definitions) {
         assert.equal(definition.spec.baseUrl, openAIBaseUrl(region));
         assert.equal(definition.spec.provider, 'openai');
@@ -7528,6 +7530,80 @@ test('native OpenAI model discovery and requests keep each connection in its reg
   );
 });
 
+test('ChatGPT discovery preserves account visibility and reasoning controls through requests', async () => {
+  const credential = chatgptFixtureCredential();
+  let hidden = false;
+  let listed = true;
+  const backend = createPiModelBackend({
+    fetch: async (input, init) => {
+      assert.equal(String(input), 'https://api.openai.com/v1/models');
+      assert.equal(new Headers(init?.headers).get('authorization'), `Bearer ${credential.access}`);
+      return Response.json({
+        models: listed
+          ? [
+              { slug: 'gpt-6.2-sol', visibility: hidden ? 'hide' : 'list' },
+              { id: 'gpt-6.2-astra' },
+              { slug: 'gpt-6-astra', visibility: 'list' },
+              { slug: 'gpt-6-luna', visibility: 'hide' },
+              { slug: 'fixture-unsupported-model', visibility: 'list' },
+            ]
+          : [],
+      });
+    },
+  });
+  const definitions = await backend.catalog('openai', 'subscription', credential);
+  assert.deepEqual(definitions.map(({ choice }) => choice.id).sort(), [
+    'gpt-6-astra',
+    'gpt-6.2-astra',
+    'gpt-6.2-sol',
+  ]);
+  for (const definition of definitions) {
+    const { runtime, model } = await createPiModelRuntime({
+      provider: 'openai',
+      method: 'subscription',
+      definition,
+      effort: 'low',
+      read: async () => credential,
+    });
+    for (const reasoning of definition.choice.efforts) {
+      assert.ok(reasoning !== 'off');
+      let calls = 0;
+      const result = await runtime.completeSimple(
+        model,
+        { messages: [{ role: 'user', content: 'Synthetic request.', timestamp: 1 }] },
+        {
+          reasoning,
+          fetch: async (input, init) => {
+            calls++;
+            assert.equal(String(input), 'https://api.openai.com/v1/responses');
+            assert.equal(
+              new Headers(init?.headers).get('authorization'),
+              `Bearer ${credential.access}`,
+            );
+            const body = JSON.parse(String(init?.body));
+            assert.equal(body.model, definition.choice.id);
+            assert.equal(body.reasoning.effort, reasoning);
+            assert.notEqual(body.reasoning.effort, 'none');
+            return Response.json({ error: { message: 'Synthetic refusal' } }, { status: 400 });
+          },
+        },
+      );
+      assert.equal(calls, 1);
+      assert.equal(result.stopReason, 'error');
+      assert.match(result.errorMessage!, /Synthetic refusal/);
+    }
+  }
+  hidden = true;
+  assert.deepEqual(
+    (await backend.catalog('openai', 'subscription', credential))
+      .map(({ choice }) => choice.id)
+      .sort(),
+    ['gpt-6-astra', 'gpt-6.2-astra'],
+  );
+  listed = false;
+  assert.deepEqual(await backend.catalog('openai', 'subscription', credential), []);
+});
+
 test('OpenAI discovery keeps the provider reason and only permits the model-list scope exception', async () => {
   const { createPiModelBackend } = await import('../src/providers/pi/models.ts');
   const { openAIBaseUrl, openAIRequestError } = await import('../src/providers/openai/api.ts');
@@ -7563,9 +7639,14 @@ test('OpenAI discovery keeps the provider reason and only permits the model-list
         Response.json({ error: { message: `Missing scopes: ${scopes}` } }, { status: 403 }),
     });
     const models = backend.catalog('openai', 'api_key', { type: 'api_key', key, region: 'eu' });
-    if (scopes === 'api.model.read')
-      assert.ok((await models).every(({ spec }) => spec.baseUrl === openAIBaseUrl('eu')));
-    else await assert.rejects(models, /api.responses.write/);
+    if (scopes === 'api.model.read') {
+      const fallback = await models;
+      assert.ok(fallback.every(({ spec }) => spec.baseUrl === openAIBaseUrl('eu')));
+      assert.deepEqual(
+        fallback.map(({ choice }) => choice.id),
+        (await backend.catalog('openai', 'api_key')).map(({ choice }) => choice.id),
+      );
+    } else await assert.rejects(models, /api.responses.write/);
   }
   let cancelled = false;
   const failure = await openAIRequestError(
