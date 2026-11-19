@@ -45,7 +45,7 @@ try {
     '--format',
     '{{json .Server.Components}}',
   ]).then(
-    (result) => JSON.parse(result.stdout),
+    (result) => JSON.parse(result.stdout) ?? [],
     () => [],
   );
   const podman =
