@@ -834,14 +834,9 @@ export function createPiModelBackend(options: { fetch?: typeof fetch } = {}): Mo
         );
         if (provider === 'openai')
           local.push(
-            ...openAIModels
-              .filter((model) => !local.some(({ id }) => id === model.id))
-              .map((model) => ({
-                ...model,
-                baseUrl: openAIBaseUrl(
-                  credential.type === 'api_key' ? credential.region : undefined,
-                ),
-              })),
+            ...openAIModels(credential.type === 'api_key' ? credential.region : undefined).filter(
+              (model) => !local.some(({ id }) => id === model.id),
+            ),
           );
         return local.filter((m) => ids.has(m.id)).map(definition);
       }

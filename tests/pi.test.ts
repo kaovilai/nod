@@ -21,7 +21,11 @@ import {
   ModelRuntime,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { createAssistantMessageEventStream, type AssistantMessage } from '@earendil-works/pi-ai';
+import {
+  calculateCost,
+  createAssistantMessageEventStream,
+  type AssistantMessage,
+} from '@earendil-works/pi-ai';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import {
   appConfirmation,
@@ -7483,7 +7487,7 @@ test('native OpenAI model discovery and requests keep each connection in its reg
     },
   });
   await Promise.all(
-    (['global', 'eu', 'us'] as const).map(async (region) => {
+    (['global', 'eu', 'us', 'jp'] as const).map(async (region) => {
       const credential = modelKeyCredential('openai', `fixture-${region}`, { region });
       const definitions = await backend.catalog('openai', 'api_key', credential);
       assert.equal(definitions.length, 5);
@@ -7501,6 +7505,23 @@ test('native OpenAI model discovery and requests keep each connection in its reg
           effort: audio ? 'off' : 'low',
           read: async () => credential,
         });
+        if (definition.choice.id.startsWith('gpt-6.2-')) {
+          for (const input of [100_000, 300_000]) {
+            const usage = {
+              input,
+              output: 1000,
+              cacheRead: 10_000,
+              cacheWrite: 1000,
+              totalTokens: input + 12_000,
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+            };
+            calculateCost(model, usage);
+            const standard = input === 100_000 ? 0.2135 : 1.222;
+            const family = definition.choice.id === 'gpt-6.2-astra' ? 4 : 1;
+            const expected = standard * family * (region === 'global' ? 1 : 1.1);
+            assert.ok(Math.abs(usage.cost.total - expected) < 1e-10);
+          }
+        }
         let calls = 0;
         const result = await runtime.completeSimple(
           model,
