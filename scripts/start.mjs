@@ -95,6 +95,7 @@ try {
       await up();
     } catch (error) {
       if (!podman) throw error;
+      console.error('The containers did not start. Removing the workspace containers to retry.');
       await run(
         'docker',
         ['compose', ...compose, 'rm', '-sf', 'workspace', 'workspace-network'],
