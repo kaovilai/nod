@@ -40,7 +40,7 @@ try {
   const dockerCpus = Number(info.NCPU ?? info.host?.cpus);
   if (!Number.isInteger(dockerCpus) || dockerCpus < 1)
     throw new Error('Docker did not report a usable CPU count.');
-  const podman = info.NCPU === undefined;
+  const podman = info.host?.cpus !== undefined || info.BuildahVersion !== undefined;
   const compose = podman ? ['-f', 'compose.yaml', '-f', 'compose.podman.yaml'] : [];
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
     const settings = parseEnv(await readFile('.env', 'utf8'));
@@ -89,11 +89,19 @@ try {
       if (running !== undefined && running !== image)
         await run('docker', ['compose', ...compose, 'rm', '-sf', 'workspace'], environment);
     }
-    await run(
-      'docker',
-      ['compose', ...compose, 'up', '-d', '--wait', '--remove-orphans'],
-      environment,
-    );
+    const up = () =>
+      run('docker', ['compose', ...compose, 'up', '-d', '--wait', '--remove-orphans'], environment);
+    try {
+      await up();
+    } catch (error) {
+      if (!podman) throw error;
+      await run(
+        'docker',
+        ['compose', ...compose, 'rm', '-sf', 'workspace', 'workspace-network'],
+        environment,
+      );
+      await up();
+    }
     return environment;
   });
   console.log('\nNod is starting. Open the link it prints when it is ready.\n');

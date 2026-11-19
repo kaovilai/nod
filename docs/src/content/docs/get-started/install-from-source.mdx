@@ -113,7 +113,7 @@ On Linux, you can run Nod with rootless Podman in place of Docker.
    sudo dnf install podman podman-docker docker-compose
    ```
 
-   Package names differ on other distributions.
+   Package names differ on other distributions. Use the `docker-compose` provider; `podman-compose` is not supported.
 
 2. Keep the Podman socket running, so Compose can reach it:
 
