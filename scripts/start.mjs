@@ -40,7 +40,18 @@ try {
   const dockerCpus = Number(info.NCPU ?? info.host?.cpus);
   if (!Number.isInteger(dockerCpus) || dockerCpus < 1)
     throw new Error('Docker did not report a usable CPU count.');
-  const podman = info.host?.cpus !== undefined || info.BuildahVersion !== undefined;
+  const components = await promisify(execFile)('docker', [
+    'version',
+    '--format',
+    '{{json .Server.Components}}',
+  ]).then(
+    (result) => JSON.parse(result.stdout),
+    () => [],
+  );
+  const podman =
+    info.host?.cpus !== undefined ||
+    info.BuildahVersion !== undefined ||
+    components.some((component) => component.Name === 'Podman Engine');
   const compose = podman ? ['-f', 'compose.yaml', '-f', 'compose.podman.yaml'] : [];
   const environment = await withLocalDatabase(process.cwd(), async (database) => {
     const settings = parseEnv(await readFile('.env', 'utf8'));
