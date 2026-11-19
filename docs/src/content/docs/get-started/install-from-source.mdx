@@ -123,7 +123,7 @@ On Linux, you can run Nod with rootless Podman in place of Docker.
 
 3. Run `pnpm start` as usual.
 
-Nod detects Podman and merges `compose.podman.yaml` into the Compose setup. The workspace keeps your user's IDs, so rootless Podman can write to the workspace folder. The workspace firewall still blocks private addresses.
+Nod detects Podman and merges `compose.podman.yaml` into the Compose setup. The workspace keeps your user's IDs, so rootless Podman can write to the workspace folder. The workspace firewall still blocks private-address egress, except DNS to its configured IPv4 nameservers. The browser and workspace CPU limits follow your machine's CPUs; the Docker VM check above doesn't apply.
 
 ## Run Nod day to day
 

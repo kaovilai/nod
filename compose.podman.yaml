@@ -1,4 +1,3 @@
-# Merged by scripts/start.mjs when the container engine is Podman.
 services:
   browser:
     tmpfs: !override
